@@ -1,0 +1,30 @@
+# ---------------------------
+# Core Django dependencies
+# ---------------------------
+Django>=4.2
+
+# ---------------------------
+# API and REST Framework
+# ---------------------------
+djangorestframework>=3.14.0
+djangorestframework-gis>=1.0.0
+django-filter>=23.0
+django-cors-headers>=4.3.0
+drf-spectacular>=0.26.0
+django-extensions>=3.2.0
+requests>=2.31.0
+
+# ---------------------------
+# Database: PostgreSQL
+# ---------------------------
+psycopg[binary]>=3.1
+
+# ---------------------------
+# Testing & development
+# ---------------------------
+pytest>=7.4.0
+pytest-django>=4.5.0
+factory-boy>=3.3.0
+
+# Docker
+gunicorn
