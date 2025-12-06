@@ -1,3 +1,5 @@
 from django.contrib import admin
+from .models import CyclePhaseEntry, RunEntry
 
-# Register your models here.
+admin.site.register(CyclePhaseEntry)
+admin.site.register(RunEntry)
