@@ -10,7 +10,9 @@ from django.utils.dateparse import parse_datetime
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.models import User
-from rest_framework import status
+from rest_framework import status, generics
+from .serializers import RegisterSerializer
+
 
 
 
@@ -167,9 +169,8 @@ def phase_comparison(request, phase_name):
         'pace_improved': pace_change < 0 if pace_change is not None else None  # True if pace got faster
     })
 
-
-
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def all_phases_comparison(request):
     """
     Get comparison for all phases at once.
@@ -179,7 +180,15 @@ def all_phases_comparison(request):
     results = []
     
     # Get the overall latest cycle number
-    latest_cycle_entry = RunEntry.objects.order_by('-cycle_id').first()
+    
+    user = request.user
+
+    latest_cycle_entry = (
+        RunEntry.objects
+        .filter(user=user)
+        .order_by('-cycle_id')
+        .first()
+    )
     
     if not latest_cycle_entry:
         return Response({
@@ -249,6 +258,13 @@ def all_phases_comparison(request):
 @api_view(['POST'])
 # @permission_classes([IsAuthenticated])
 def log_run(request):
+# {
+#     "date",
+#     "pace",
+#     "distance",
+#     "motivation_level",
+#     "last_period_start"
+# }
     """
     Mobile sends: date, pace, distance, motivation, last_period_start
     Backend calculates and stores: phase, cycle_id
@@ -368,6 +384,9 @@ def log_run(request):
         'cycle_day': phase_info['cycle_day']
     }, status=status.HTTP_201_CREATED)
 
+
+class RegisterView(generics.CreateAPIView):
+    serializer_class = RegisterSerializer
 
 
 

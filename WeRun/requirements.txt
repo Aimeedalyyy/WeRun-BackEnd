@@ -13,6 +13,7 @@ django-cors-headers>=4.3.0
 drf-spectacular>=0.26.0
 django-extensions>=3.2.0
 requests>=2.31.0
+djangorestframework-simplejwt
 
 # ---------------------------
 # Database: PostgreSQL

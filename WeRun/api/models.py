@@ -1,8 +1,18 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
-from django.contrib.auth.models import User
+from django.contrib.auth.models import AbstractUser
+from django.conf import settings
 
 
+class User(AbstractUser):
+    affiliated_user = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='affiliates'
+    )
+    
 class CyclePhaseEntry(models.Model):
     """
     Running & motivation data for a specific menstrual cycle phase,
@@ -17,7 +27,7 @@ class CyclePhaseEntry(models.Model):
     ]
 
     user = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="cycle_phase_entries"
     )
@@ -62,9 +72,8 @@ class CyclePhaseEntry(models.Model):
     def __str__(self):
         return f"{self.user.username} – Cycle {self.cycle_id} – {self.phase_name}"
 
-
 class UserProfile(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     average_cycle_length = models.IntegerField(default=28)
     last_period_sync = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -75,7 +84,7 @@ class UserProfile(models.Model):
 
 class RunEntry(models.Model):
     user = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="run_entries"
     )
@@ -99,4 +108,3 @@ class RunEntry(models.Model):
 
     def __str__(self):
         return f"{self.user.username} – {self.cycle_phase} – {self.date.date()}"
-

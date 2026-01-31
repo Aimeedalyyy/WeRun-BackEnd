@@ -1,6 +1,7 @@
 # urls.py
 from django.urls import path
 from . import views
+from .views import RegisterView
 
 urlpatterns = [
     path('api/test/', views.test_endpoint, name='test-endpoint'),
@@ -10,6 +11,7 @@ urlpatterns = [
     path('api/sync-period/', views.sync_period_data, name='sync-period'),
     path('api/log-run/', views.log_run, name='log-run'),
     path('api/user-insights/', views.get_user_insights, name='user-insights'),
-    #api/test/
-]
 
+    path('api/register/', RegisterView.as_view()),
+
+]
