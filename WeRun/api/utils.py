@@ -15,7 +15,7 @@ def calculate_cycle_phase(last_period_start: datetime, current_date: datetime = 
     cycle_day = ((days_since_period - 1) % 28) + 1
     
     if cycle_day <= 5:
-        phase = "Menstrual"
+        phase = "Menstruation"
         days_until_next = 6 - cycle_day
     elif cycle_day <= 13:
         phase = "Follicular"

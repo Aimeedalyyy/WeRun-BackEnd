@@ -1,20 +1,16 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, APIView, permission_classes
 from rest_framework.response import Response
 from datetime import datetime
 from django.utils.dateparse import parse_datetime
 from django.db.models import Avg, Count
 from .utils import calculate_cycle_phase, get_phase_recommendations
-from .models import CyclePhaseEntry, UserProfile, RunEntry
+from .models import CyclePhaseEntry, UserProfile, RunEntry, TrackableLog
 from rest_framework.permissions import IsAuthenticated
 from django.utils.dateparse import parse_datetime
-from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.models import User
 from rest_framework import status, generics
-from .serializers import RegisterSerializer
-
-
-
+from .serializers import RegisterSerializer, TrackableLogCreateSerializer, UserTrackable, UserSymptom
 
 #Sample
 @api_view(['POST'])
@@ -52,10 +48,11 @@ def test_endpoint(request):
         'test_number': 1,
         'current_date': todays_date,
         'calculated_phase': phase_info['phase'],
+        'cycle_day': phase_info['cycle_day'],  # Day of menstrual cycle
+        'days_until_next_phase': phase_info['days_until_next_phase'],
     }
+
     return Response(test_object)
-
-
 
 @api_view(['GET'])
 def analysis_endpoint(request):
@@ -91,7 +88,6 @@ def analysis_endpoint(request):
     }
     ]
     return Response(analysis_objects)
-
 
 @api_view(['GET'])
 def phase_comparison(request, phase_name):
@@ -176,7 +172,7 @@ def all_phases_comparison(request):
     Get comparison for all phases at once.
     URL: /api/all-phases-comparison/
     """
-    phases = ['Menstrual', 'Follicular', 'Ovulatory', 'Luteal']
+    phases = ['Menstruation', 'Follicular', 'Ovulatory', 'Luteal']
     results = []
     
     # Get the overall latest cycle number
@@ -256,7 +252,7 @@ def all_phases_comparison(request):
     }, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
-# @permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated])
 def log_run(request):
 # {
 #     "date",
@@ -388,6 +384,36 @@ def log_run(request):
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
 
+# @permission_classes([IsAuthenticated])
+class TrackableLogCreateView(generics.CreateAPIView):
+    serializer_class = TrackableLogCreateSerializer
+    queryset = TrackableLog.objects.all()
+
+class UserTrackingPreferencesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        trackables = (
+            UserTrackable.objects
+            .filter(user=user)
+            .select_related("trackable")
+            .values_list("trackable__name", flat=True)
+        )
+
+        symptoms = (
+            UserSymptom.objects
+            .filter(user=user)
+            .select_related("symptom")
+            .values_list("symptom__name", flat=True)
+        )
+
+        return Response({
+            "trackables": list(trackables),
+            "symptoms": list(symptoms)
+        })
+
 
 
 
@@ -482,3 +508,6 @@ def sync_period_data(request):
         'historical_stats': historical_stats,
         'recommendations': recommendations
     })
+
+
+

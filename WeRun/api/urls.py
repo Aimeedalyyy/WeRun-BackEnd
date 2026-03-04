@@ -1,7 +1,7 @@
 # urls.py
 from django.urls import path
 from . import views
-from .views import RegisterView
+from .views import RegisterView, TrackableLogCreateView, UserTrackingPreferencesView
 
 urlpatterns = [
     path('api/test/', views.test_endpoint, name='test-endpoint'),
@@ -13,5 +13,10 @@ urlpatterns = [
     path('api/user-insights/', views.get_user_insights, name='user-insights'),
 
     path('api/register/', RegisterView.as_view()),
+
+    #Endpoint for a user to log each trackable with values, also 
+    path('api/log_trackables/', TrackableLogCreateView.as_view(), name='trackable-log-create'),
+     path("api/user_tracking/", UserTrackingPreferencesView.as_view(), name="user-preferences"),
+
 
 ]
