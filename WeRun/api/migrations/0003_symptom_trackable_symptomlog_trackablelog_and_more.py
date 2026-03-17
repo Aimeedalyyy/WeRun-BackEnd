@@ -34,7 +34,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
                 ('date', models.DateField()),
-                ('severity', models.PositiveSmallIntegerField()),
+                # ('severity', models.PositiveSmallIntegerField()),
                 ('notes', models.TextField(blank=True)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('symptom', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='logs', to='api.symptom')),

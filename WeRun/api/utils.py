@@ -1,5 +1,6 @@
-from datetime import datetime, timedelta
+from datetime import datetime, date
 from typing import Dict
+from .models import Cycle
 
 def calculate_cycle_phase(last_period_start: datetime, current_date: datetime = None) -> Dict:
     """
@@ -33,6 +34,63 @@ def calculate_cycle_phase(last_period_start: datetime, current_date: datetime = 
         "days_until_next_phase": days_until_next,
         "last_period_start": last_period_start.isoformat()
     }
+
+def get_user_cycle_context(user, target_date: date):
+    """
+    Returns (phase_str, cycle_day_int) using the existing calculate_cycle_phase utility.
+    Returns (None, None) if the user has no cycle data yet.
+    """
+
+
+    # ── Phase name mapping: your utils.py → advice engine ────────────────────
+    PHASE_MAP = {
+        "Menstruation": "menstrual",
+        "Follicular":   "follicular",
+        "Ovulatory":    "ovulatory",
+        "Luteal":       "luteal",
+    }
+
+    latest_cycle = Cycle.objects.filter(user=user).order_by("-period_start_date").first()
+    if not latest_cycle:
+        return (None, None)
+
+    try:
+        last_period_dt = datetime.combine(latest_cycle.period_start_date, datetime.min.time())
+        current_dt     = datetime.combine(target_date, datetime.min.time())
+        phase_info     = calculate_cycle_phase(last_period_dt, current_dt)
+
+        phase    = PHASE_MAP.get(phase_info["phase"])   # normalise to lowercase
+        cycle_day = phase_info["cycle_day"]
+
+        return (phase, cycle_day)
+
+    except Exception:
+        return (None, None)
+
+def get_cycle_day_for_date(user, target_date: date) -> int | None:
+    """
+    Returns the cycle day (1-based) for a given date.
+    Returns None if the date does not fall within any cycle.
+    """
+
+    cycle = (
+        Cycle.objects
+        .filter(
+            user=user,
+            period_start_date__lte=target_date
+        )
+        .order_by("-period_start_date")
+        .first()
+    )
+
+    if not cycle:
+        return None
+
+    # If cycle has ended, make sure date is inside range
+    if cycle.period_end_date and target_date > cycle.period_end_date:
+        return None
+
+    return (target_date - cycle.period_start_date).days + 1
 
 def get_phase_recommendations(phase: str) -> Dict:
     """

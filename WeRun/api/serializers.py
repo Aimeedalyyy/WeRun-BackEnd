@@ -2,6 +2,7 @@
 from rest_framework import serializers
 from django.utils.timezone import now
 from django.contrib.auth import get_user_model
+from .utils import get_user_cycle_context
 from .models import (
     UserProfile,
     Trackable,
@@ -9,7 +10,9 @@ from .models import (
     UserTrackable,
     SymptomLog,
     Symptom,
-    UserSymptom
+    UserSymptom,
+    Cycle,
+    CycleSampleLog
 )
 
 User = get_user_model()
@@ -105,47 +108,22 @@ class RegisterSerializer(serializers.ModelSerializer):
 
         return user
 
-class TrackableLogSerializer(serializers.ModelSerializer):
-    trackables = TrackableInputSerializer(many=True, required=False)
-
-
-    class Meta:
-        model = TrackableLog
-        fields = ("id", "trackable_name", "date", "value_numeric", "value_text")
-
-    def create(self, validated_data):
-        user = self.context["request"].user
-        name = validated_data.pop("trackable_name")
-
-        trackable = Trackable.objects.get(name=name)
-
-        return TrackableLog.objects.update_or_create(
-            user=user,
-            trackable=trackable,
-            date=validated_data["date"],
-            defaults=validated_data
-        )[0]
-    
-
-class SymptomLogSerializer(serializers.ModelSerializer):
-    symptom_name = serializers.CharField(write_only=True)
+class SymptomLogWriteSerializer(serializers.ModelSerializer):
+    symptom = serializers.PrimaryKeyRelatedField(
+        queryset=Symptom.objects.all()
+    )
+    date = serializers.DateField()
 
     class Meta:
         model = SymptomLog
-        fields = ("id", "symptom_name", "date", "severity", "notes")
-
+        fields = ["id", "symptom", "date"]
+    
     def create(self, validated_data):
-        user = self.context["request"].user
-        name = validated_data.pop("symptom_name")
-
-        symptom = Symptom.objects.get(name=name)
-
-        return SymptomLog.objects.update_or_create(
-            user=user,
-            symptom=symptom,
-            date=validated_data["date"],
-            defaults=validated_data
-        )[0]
+        # Attach the current user automatically
+        user = self.context['request'].user
+        return SymptomLog.objects.create(user=user, **validated_data)
+    
+    
     
 class TrackableLogCreateSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source='trackable.name', write_only=True)
@@ -172,3 +150,150 @@ class TrackableLogCreateSerializer(serializers.ModelSerializer):
             }
         )
         return log
+    
+class CycleSampleLogCreateSerializer(serializers.ModelSerializer):
+
+
+    
+    cycle_id = serializers.UUIDField(write_only=True)
+    symptoms = serializers.ListField(
+        child=serializers.CharField(),
+        write_only=True,
+        required=False
+    )
+
+    class Meta:
+        model = CycleSampleLog
+        fields = (
+            "id",
+            "cycle_id",
+            "date_logged",
+            "day_of_cycle",
+            "flow_type",
+            "notes",
+            "symptoms",
+        )
+
+    def create(self, validated_data):
+        user = self.context["request"].user
+        cycle_id = validated_data.pop("cycle_id")
+        symptom_names = validated_data.pop("symptoms", [])
+
+        cycle = Cycle.objects.get(id=cycle_id, user=user)
+
+        log, _ = CycleSampleLog.objects.update_or_create(
+            user=user,
+            cycle=cycle,
+            date_logged=validated_data["date_logged"],
+            day_of_cycle=validated_data["day_of_cycle"],
+            defaults={
+                "flow_type": validated_data.get("flow_type"),
+                "notes": validated_data.get("notes", ""),
+            },
+        )
+
+        # Handle symptoms
+        if symptom_names:
+            symptoms = []
+            for name in symptom_names:
+                symptom, _ = Symptom.objects.get_or_create(name=name)
+                symptoms.append(symptom)
+
+            log.symptoms.set(symptoms)
+
+        return log
+
+class CycleDayLogCreateSerializer(serializers.Serializer):
+    cycle_id = serializers.UUIDField()
+    date_logged = serializers.DateField()
+    flow_type = serializers.IntegerField()
+    notes = serializers.CharField(required=False, allow_blank=True)
+    symptoms = serializers.ListField(
+        child=serializers.CharField(),
+        required=False
+    )
+
+# READ ONLY SERIALISERS FOR RETURNING ALL USER DATA --------------------
+
+class TrackableLogSerializer(serializers.ModelSerializer):
+    unit = serializers.CharField(source="trackable.unit", read_only=True)
+    name = serializers.CharField(source="trackable.name")
+
+    phase = serializers.SerializerMethodField()
+    cycle_day = serializers.SerializerMethodField()
+
+
+    class Meta:
+        model = TrackableLog
+        fields = (
+            "id",
+            "name",
+            "date",
+            "value_numeric",
+            "value_text",
+            "unit",
+            "phase",
+            "cycle_day",
+        )
+    
+    def get_phase(self, obj):
+        phase, _ = get_user_cycle_context(user=obj.user, target_date=obj.date)
+        return phase
+
+    def get_cycle_day(self, obj):
+        _, cycle_day = get_user_cycle_context(user=obj.user, target_date=obj.date)
+        return cycle_day
+
+
+
+class SymptomLogSerializer(serializers.ModelSerializer):
+    symptom_name = serializers.CharField(source="symptom.name")
+    phase = serializers.SerializerMethodField()
+    cycle_day = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SymptomLog
+        fields = ("id", "symptom_name", "date", "phase", "cycle_day", "notes")
+
+    def get_phase(self, obj):
+        phase, _ = get_user_cycle_context(user=obj.user, target_date=obj.date)
+        return phase
+
+    def get_cycle_day(self, obj):
+        _, cycle_day = get_user_cycle_context(user=obj.user, target_date=obj.date)
+        return cycle_day
+
+class CycleSampleLogSerializer(serializers.ModelSerializer):
+    symptoms = serializers.SlugRelatedField(
+        many=True,
+        read_only=True,
+        slug_field="name"
+    )
+
+    class Meta:
+        model = CycleSampleLog
+        fields = (
+            "id",
+            "date_logged",
+            "flow_type",
+            "notes",
+            "symptoms",
+        )
+
+class CycleSerializer(serializers.ModelSerializer):
+    samples = CycleSampleLogSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Cycle
+        fields = (
+            "id",
+            "period_start_date",
+            "period_end_date",
+            "notes",
+            "samples",
+        )
+
+class UserTrackingDashboardSerializer(serializers.Serializer):
+    trackables = TrackableLogSerializer(many=True)
+    symptoms = SymptomLogSerializer(many=True)
+    cycles = CycleSerializer(many=True)
