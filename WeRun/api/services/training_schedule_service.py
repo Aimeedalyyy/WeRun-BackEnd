@@ -45,7 +45,6 @@ RACE_CONFIG = {
     },
 }
 
-
 PHASE_MODIFIERS = {
     'Menstruation': 0.70,   
     'Follicular':   1.10,  
