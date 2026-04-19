@@ -127,8 +127,6 @@ class SymptomLogWriteSerializer(serializers.ModelSerializer):
     
 class TrackableLogCreateSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source='trackable.name', write_only=True)
-    
-    
     class Meta:
         model = TrackableLog
         fields = ('id', 'name', 'value_numeric', 'value_text')
@@ -243,8 +241,6 @@ class TrackableLogSerializer(serializers.ModelSerializer):
     def get_cycle_day(self, obj):
         _, cycle_day = get_user_cycle_context(user=obj.user, target_date=obj.date)
         return cycle_day
-
-
 
 class SymptomLogSerializer(serializers.ModelSerializer):
     symptom_name = serializers.CharField(source="symptom.name")

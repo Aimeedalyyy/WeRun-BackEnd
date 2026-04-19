@@ -37,8 +37,14 @@ class RunEntry(models.Model):
 
     date = models.DateTimeField()
     pace = models.DecimalField(max_digits=5, decimal_places=2)
+
+    is_baseline = models.BooleanField(default=False)
+    is_prescribed = models.BooleanField(default=False)
+    baseline_phase = models.CharField(max_length=50, null=True, blank=True)
+
     distance = models.DecimalField(max_digits=6, decimal_places=2)
     motivation_level = models.IntegerField()
+    exertion_level = models.IntegerField()
 
     cycle_phase = models.CharField(max_length=50)  # Auto-calculated backend
     cycle_id = models.IntegerField()  # Auto-assigned backend
@@ -289,7 +295,6 @@ class CyclePhaseEntry(models.Model):
     
 
 # ADVICE ON TRACKABLES --------------------------------------------
-
 class AdviceRule(models.Model):
 
     PHASE_CHOICES = [
@@ -437,13 +442,14 @@ class PrescribedSession(models.Model):
         on_delete=models.CASCADE,
         related_name='prescribed_sessions'
     )
+
     race_goal = models.ForeignKey(
         'RaceGoal',
         null=True,
         blank=True,
-        on_delete=models.SET_NULL,
+        on_delete=models.CASCADE,
         related_name='prescribed_sessions'
-    )  # null when in fun/tracking mode
+    )
  
     session_type = models.CharField(max_length=20, choices=SESSION_TYPES)
     cycle_phase  = models.CharField(max_length=20, choices=PHASE_CHOICES)
@@ -475,13 +481,12 @@ class PrescribedSession(models.Model):
  
     @property
     def is_expired(self):
-        """
-        A pending baseline run is valid for 3 days after prescription.
-        After that it should be marked skipped.
-        """        
-
-        if self.status == 'pending' and self.prescribed_date:
-            return date.today() > self.prescribed_date + timedelta(days=3)
+    # """
+    # A pending session expires at the end of the prescribed day.
+    # Any day after prescribed_date is considered expired.
+    # """
+        if self.prescribed_date:
+            return date.today() > self.prescribed_date
         return False
 
 class RaceGoal(models.Model):
@@ -504,6 +509,7 @@ class RaceGoal(models.Model):
  
     race_type  = models.CharField(max_length=20, choices=RACE_TYPES)
     race_date  = models.DateField(null=True, blank=True)   # null for fun mode
+    race_name = models.CharField(max_length=100, blank=True) # optional name
     goal_time  = models.DurationField(null=True, blank=True)  # optional target time
     is_active  = models.BooleanField(default=True)
  

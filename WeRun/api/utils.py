@@ -1,6 +1,6 @@
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Dict
-from .models import Cycle
+from .models import Cycle, PrescribedSession
 
 def calculate_cycle_phase(last_period_start: datetime, current_date: datetime = None) -> Dict:
     """
@@ -119,3 +119,11 @@ def get_phase_recommendations(phase: str) -> Dict:
         }
     }
     return recommendations.get(phase, recommendations["Menstrual"])
+
+def mark_expired_sessions(user):
+    today = datetime.now()
+    PrescribedSession.objects.filter(
+        user=user,
+        status='pending',
+        prescribed_date__lt=today
+    ).update(status='skipped')

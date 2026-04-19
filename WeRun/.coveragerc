@@ -1,0 +1,14 @@
+[run]
+source = api
+omit =
+    api/migrations/*
+    api/management/*
+    api/tests/*
+    api/apps.py
+    api/tests.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if TYPE_CHECKING:

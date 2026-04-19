@@ -62,6 +62,7 @@ class TrackableAdmin(admin.ModelAdmin):
     list_display = [field.name for field in Trackable._meta.fields]
 
 
+
 # -------------------------
 # UserTrackable Admin
 # -------------------------
@@ -91,6 +92,7 @@ class SymptomAdmin(admin.ModelAdmin):
     list_display = [field.name for field in Symptom._meta.fields]
 
 
+
 # -------------------------
 # UserSymptom Admin
 # -------------------------
@@ -105,6 +107,11 @@ class UserSymptomAdmin(admin.ModelAdmin):
 @admin.register(SymptomLog)
 class SymptomLogAdmin(admin.ModelAdmin):
     list_display = [field.name for field in SymptomLog._meta.fields]
+    list_filter = ('symptom', 'date')
+    search_fields = ('user__username', 'symptom__name')
+    date_hierarchy = 'date'
+    ordering = ('-date',)
+    list_select_related = ('user', 'symptom')
 
 
 # -------------------------
@@ -160,7 +167,7 @@ class ActivePhaseAdmin(admin.ModelAdmin):
 # -------------------------
 @admin.register(PrescribedSession)
 class PrescribedSessionAdmin(admin.ModelAdmin):
-    list_display        = ('user', 'session_type', 'cycle_phase', 'prescribed_date', 'status', 'is_expired')
+    list_display        = ('user', 'session_type', 'distance', 'cycle_phase', 'prescribed_date', 'status', 'is_expired')
     list_filter         = ('session_type', 'cycle_phase', 'status')
     search_fields       = ('user__username',)
     ordering            = ('-prescribed_date',)
@@ -173,7 +180,7 @@ class PrescribedSessionAdmin(admin.ModelAdmin):
 # -------------------------
 @admin.register(RaceGoal)
 class RaceGoalAdmin(admin.ModelAdmin):
-    list_display        = ('user', 'race_type', 'race_date', 'goal_time', 'is_active', 'created_at')
+    list_display        = ('user', 'race_type', 'race_date', 'race_name', 'goal_time', 'is_active', 'created_at')
     list_filter         = ('race_type', 'is_active')
     search_fields       = ('user__username',)
     ordering            = ('-created_at',)

@@ -1,18 +1,16 @@
 """
 advice/services.py
-
-Rule engine that evaluates AdviceRule records against a user's
-logged trackables, symptoms, and cycle context for a given date.
+Rule engine that evaluates AdviceRule records against a user's logged trackables, symptoms, and cycle context for a given date.
 """
 
 from datetime import date, timedelta
 from collections import defaultdict
 from django.db.models import Q
 from .models import AdviceRule, DailyAdviceCache, TrackableLog, SymptomLog      
-from .utils import get_user_cycle_context  # returns (phase_str, cycle_day_int)
-# ─────────────────────────────────────────────────────────────────────────────
+from .utils import get_user_cycle_context  
 
-BASELINE_UPLIFT   = 0.05   # 5% above baseline triggers "above_baseline" rule
+
+BASELINE_UPLIFT   = 0.05
 BASELINE_MINIMUM_LOGS = 2  # need at least this many past logs to compute a baseline
 MAX_CARDS  = 4    
 
@@ -26,15 +24,15 @@ def get_advice_for_user(user, target_date: date = None) -> list[dict]:
     if target_date is None:
         target_date = date.today()
 
-    # ── Cache check ───────────────────────────────────────────────────────────
     cached = DailyAdviceCache.objects.filter(user=user, date=target_date).first()
     if cached:
+        print(f"\n🐞 Cache exists grabbing from the cache")
         return cached.advice
 
-    # ── Run engine ────────────────────────────────────────────────────────────
+    print(f"\n🐞 Not in cache run the engine")
     advice_cards = _run_engine(user, target_date)
+    
 
-    # ── Store in cache ────────────────────────────────────────────────────────
     DailyAdviceCache.objects.update_or_create(
         user=user,
         date=target_date,
@@ -45,10 +43,6 @@ def get_advice_for_user(user, target_date: date = None) -> list[dict]:
 
 
 def invalidate_advice_cache(user, target_date: date = None):
-    """
-    Call this whenever a user logs new data so stale advice is cleared.
-    Hook this into your TrackableLog / SymptomLog save signals.
-    """
     if target_date is None:
         target_date = date.today()
     DailyAdviceCache.objects.filter(user=user, date=target_date).delete()
@@ -59,15 +53,14 @@ def invalidate_advice_cache(user, target_date: date = None):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _run_engine(user, target_date: date) -> list[dict]:
+    print(f"\n=== Running Advice Engine for {user} on {target_date} ===")
     # 1. Cycle context
     phase, cycle_day = get_user_cycle_context(user, target_date)
-    # phase is one of: 'menstrual' | 'follicular' | 'ovulatory' | 'luteal'
-    # cycle_day is an int (1-indexed) or None if cycle history is insufficient
 
     # 2. Today's data
-    trackable_logs  = _get_todays_trackable_logs(user, target_date)   # {name: TrackableLog}
-    symptom_names   = _get_todays_symptom_names(user, target_date)    # {"cramps", "headache", ...}
-    baselines       = _get_personal_baselines(user, target_date)      # {name: float avg}
+    trackable_logs  = _get_todays_trackable_logs(user, target_date)
+    symptom_names   = _get_todays_symptom_names(user, target_date)
+    baselines       = _get_personal_baselines(user, target_date)
 
     # 3. Candidate rules — this phase + phase='any'
     candidates = AdviceRule.objects.filter(phase__in=[phase, 'any'])
@@ -83,10 +76,12 @@ def _run_engine(user, target_date: date) -> list[dict]:
     matched = []
     for rule in candidates:
         if _rule_matches(rule, trackable_logs, symptom_names, baselines):
+            print(f"- Rule matched '{rule}' (priority={rule.priority})")
             matched.append(rule)
 
     # 5. Pick top card per category, sorted by priority
     results = _pick_top_per_category(matched, max_total=MAX_CARDS)
+    print(f"Selected top {len(results)} card(s) after "f"category/priority filtering (max={MAX_CARDS})")
 
     # 6. Fallback to generic phase advice if nothing matched
     if not results:
@@ -94,7 +89,9 @@ def _run_engine(user, target_date: date) -> list[dict]:
             AdviceRule.objects.filter(phase=phase, is_generic=True)
             .order_by('priority')[:MAX_CARDS]
         )
+        print(f"    Generic fallback returned {len(results)} card(s)")
 
+    print(f"=== Engine finished: returning {len(results)} card(s) ===\n")
     return [_serialise_rule(rule) for rule in results]
 
 
@@ -118,7 +115,7 @@ def _rule_matches(rule, trackable_logs: dict, symptom_names: set, baselines: dic
         )
 
     if ctype == 'trackable_baseline':
-        log      = trackable_logs.get(rule.condition_key)
+        log = trackable_logs.get(rule.condition_key)
         baseline = baselines.get(rule.condition_key)
         if log is None or log.value_numeric is None or baseline is None:
             return False
@@ -202,9 +199,6 @@ def _evaluate_vs_baseline(value: float, baseline: float, operator: str) -> bool:
     return False
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Selection & serialisation
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _pick_top_per_category(rules: list, max_total: int) -> list:
     """One card per advice category, highest priority first."""
@@ -223,7 +217,7 @@ def _serialise_rule(rule) -> dict:
     """Converts an AdviceRule into the dict shape the iOS app receives."""
     return {
         'id':       str(rule.id),
-        'category': rule.advice_category,   # 'training' | 'recovery' | 'nutrition' | 'mindset'
+        'category': rule.advice_category,  
         'title':    rule.title,
         'body':     rule.advice_text,
         'phase':    rule.phase,

@@ -1,9 +1,9 @@
 from rest_framework.decorators import api_view, APIView, permission_classes
 from rest_framework.response import Response
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from django.utils.dateparse import parse_datetime
 from django.db.models import Avg, Count
-from .utils import calculate_cycle_phase, get_phase_recommendations
+from .utils import calculate_cycle_phase, get_phase_recommendations, get_user_cycle_context, mark_expired_sessions
 from .models import CyclePhaseEntry, UserProfile, RunEntry, TrackableLog, Symptom, ActivePhase, PrescribedSession, RaceGoal
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.permissions import AllowAny
@@ -12,6 +12,7 @@ from rest_framework import status, generics
 from .serializers import RegisterSerializer, TrackableLogCreateSerializer, UserTrackable, UserSymptom, CycleSampleLogCreateSerializer, CycleSampleLog, SymptomLogSerializer, Cycle, SymptomLog, UserTrackingDashboardSerializer, CycleDayLogCreateSerializer, CycleSampleLogSerializer, SymptomLogWriteSerializer
 from .adviceService import get_advice_for_user, get_user_cycle_context
 from .services.phase_service import check_and_update_phase, force_phase_reset, get_active_phase
+from .services.training_schedule_service import generate_training_schedule, get_schedule_summary, adjust_todays_session_for_symptoms 
 
 #Sample
 @api_view(['POST'])
@@ -56,54 +57,7 @@ def test_endpoint(request):
     return Response(test_object)
 
 @api_view(['GET'])
-def analysis_endpoint(request):
-    """ Endpoint for the analysis page"""
-    analysis_objects = [
-    {
-        "phase_name": "Menstrual",
-        "avg_pace": 6.12,
-        "motivation_level": 4,
-        "stat_per_avg": "Lower energy is normal — go easier on yourself.",
-        "stat_per_mood": "Mood may dip; prioritise rest and recovery."
-    },
-    {
-        "phase_name": "Follicular",
-        "avg_pace": 5.48,
-        "motivation_level": 7,
-        "stat_per_avg": "Energy is rising — great time for building momentum.",
-        "stat_per_mood": "Mood often improves and creativity increases."
-    },
-    {
-        "phase_name": "Ovulatory",
-        "avg_pace": 5.32,
-        "motivation_level": 8,
-        "stat_per_avg": "Peak performance window — pacing feels easier.",
-        "stat_per_mood": "Confidence and social energy are typically higher."
-    },
-    {
-        "phase_name": "Luteal",
-        "avg_pace": 5.66,
-        "motivation_level": 9,
-        "stat_per_avg": "You are so back",
-        "stat_per_mood": "You are so back still"
-    }
-    ]
-    return Response(analysis_objects)
-
-@api_view(['GET'])
 def phase_comparison(request, phase_name):
-    """
-    Compare current cycle phase stats with previous cycle.
-    URL: /api/phase-comparison/<phase_name>/
-    
-    Returns:
-    - phase: The phase name
-    - current_avg_pace: Average pace for latest cycle
-    - current_avg_motivation: Average motivation for latest cycle
-    - pace_change_percent: Percentage change from previous cycle (negative = improvement)
-    - motivation_change_percent: Percentage change from previous cycle
-    """
-    
     # Validate phase name
     valid_phases = ['Menstrual', 'Follicular', 'Ovulatory', 'Luteal']
     if phase_name not in valid_phases:
@@ -169,10 +123,6 @@ def phase_comparison(request, phase_name):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def all_phases_comparison(request):
-    """
-    Get comparison for all phases at once.
-    URL: /api/all-phases-comparison/
-    """
     phases = ['Menstruation', 'Follicular', 'Ovulatory', 'Luteal']
     results = []
     
@@ -255,19 +205,8 @@ def all_phases_comparison(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def log_run(request):
-# {
-#     "date",
-#     "pace",
-#     "distance",
-#     "motivation_level",
-#     "last_period_start"
-# }
-    """
-    Mobile sends: date, pace, distance, motivation, last_period_start
-    Backend calculates and stores: phase, cycle_id
-    """
     # Validate required fields
-    required_fields = ['date', 'pace', 'distance', 'motivation_level', 'last_period_start']
+    required_fields = ['date', 'pace', 'distance', 'motivation_level', 'exertion_level', 'last_period_start']
     missing_fields = [field for field in required_fields if field not in request.data]
     
     if missing_fields:
@@ -287,9 +226,9 @@ def log_run(request):
         }, status=status.HTTP_400_BAD_REQUEST)
     
     last_period = request.data.get('last_period_start')
-    period_date = parse_datetime(last_period)
-    
-    if period_date is None:
+    try:
+        period_date = datetime.fromisoformat(last_period).replace(tzinfo=timezone.utc)
+    except (ValueError, AttributeError, TypeError):
         return Response({
             'error': 'Invalid last_period_start format',
             'detail': 'Expected ISO8601 format (e.g., 2025-11-20T00:00:00Z)',
@@ -301,6 +240,7 @@ def log_run(request):
         pace = float(request.data['pace'])
         distance = float(request.data['distance'])
         motivation_level = int(request.data['motivation_level'])
+        exertion_level = int(request.data['exertion_level'])
         
         if pace <= 0:
             return Response({
@@ -318,6 +258,12 @@ def log_run(request):
             return Response({
                 'error': 'Invalid motivation_level',
                 'detail': 'Motivation level must be between 1 and 10'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not (1 <= exertion_level <= 10):
+            return Response({
+                'error': 'Invalid exertion_level',
+                'detail': 'Exertion level must be between 1 and 10'
             }, status=status.HTTP_400_BAD_REQUEST)
             
     except (ValueError, TypeError) as e:
@@ -364,6 +310,7 @@ def log_run(request):
             pace=pace,
             distance=distance,
             motivation_level=motivation_level,
+            exertion_level=exertion_level,
             cycle_phase=phase_info['phase'],
             cycle_id=cycle_id
         )
@@ -381,6 +328,8 @@ def log_run(request):
         'cycle_day': phase_info['cycle_day']
     }, status=status.HTTP_201_CREATED)
 
+
+# -------------------------
 
 class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
@@ -564,9 +513,6 @@ def today_advice(request):
         'advice':    get_advice_for_user(request.user, target_date),
     })
 
-
-
-
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def phase_advice(request, phase):
@@ -595,84 +541,80 @@ def cycle_calendar(request):
     if not cycles.exists():
         return Response([])
 
-    # --- Compute averages ---
     cycle_list = list(cycles)
 
-    # Average menstrual length from period_start to period_end
-    menstrual_lengths = []
-    for c in cycle_list:
-        if c.period_end_date and c.period_start_date:
-            length = (c.period_end_date - c.period_start_date).days + 1
-            menstrual_lengths.append(max(length, 1))
+    # --- Compute averages ---
+    menstrual_lengths = [
+        max((c.period_end_date - c.period_start_date).days + 1, 1)
+        for c in cycle_list if c.period_start_date and c.period_end_date
+    ]
     avg_menstrual = round(sum(menstrual_lengths) / len(menstrual_lengths)) if menstrual_lengths else 5
 
-    # Average cycle length from gap between start dates
-    cycle_lengths = []
-    for i in range(len(cycle_list) - 1):
-        gap = (cycle_list[i + 1].period_start_date - cycle_list[i].period_start_date).days
-        cycle_lengths.append(gap)
+    cycle_lengths = [
+        (cycle_list[i + 1].period_start_date - cycle_list[i].period_start_date).days
+        for i in range(len(cycle_list) - 1)
+    ]
     avg_cycle = round(sum(cycle_lengths) / len(cycle_lengths)) if cycle_lengths else 28
 
-    # --- Generate days from most recent cycle ---
-    # Take the most recent cycle whose start date is on or before today:
+    # --- Determine last logged cycle ---
     today = date.today()
     past_cycles = [c for c in cycle_list if c.period_start_date <= today]
     last_logged = past_cycles[-1] if past_cycles else cycle_list[-1]
 
-    # Roll forward from last logged start date using avg cycle length
-    # until we find the predicted cycle that contains today
+    # Roll forward to predicted start of current cycle
     predicted_start = last_logged.period_start_date
     while predicted_start + timedelta(days=avg_cycle) <= today:
         predicted_start += timedelta(days=avg_cycle)
 
-    # Use predicted_start instead of current_cycle.period_start_date
     start_date = predicted_start
 
-    # print(f"🐞 Selected current_cycle start: {current_cycle.period_start_date}")
-
-
+    # --- Define cycle phases ---
     luteal_length = 14
     ovulation_length = 1
     follicular_length = max(avg_cycle - avg_menstrual - luteal_length - ovulation_length, 3)
 
-    phases = (
-        [('menstruation', avg_menstrual)] +
-        [('follicular', follicular_length)] +
-        [('ovulation', ovulation_length)] +
-        [('luteal', luteal_length)]
-    )
+    phases = [
+        ('menstruation', avg_menstrual),
+        ('follicular', follicular_length),
+        ('ovulation', ovulation_length),
+        ('luteal', luteal_length)
+    ]
 
+    # --- Generate days with prescribed session ---
     days = []
     day_number = 1
     current_date = start_date
 
     for phase_name, length in phases:
         for _ in range(length):
+            # Get prescribed session for this date (if any)
+            session = PrescribedSession.objects.filter(
+                user=user,
+                prescribed_date=current_date
+            ).first()
+
             days.append({
                 'day_of_cycle': day_number,
                 'date': current_date.isoformat(),
                 'phase': phase_name,
-                'workout_type': None
+                'workout': {
+                    'session_id': session.id,
+                    'session_type': session.session_type,
+                    'distance': float(session.distance),
+                    'status': session.status
+                } if session else None
             })
             day_number += 1
             current_date += timedelta(days=1)
 
     return Response(days)
 
-
 # NOT Tested
 @api_view(['GET'])
 # @permission_classes([IsAuthenticated])
 @permission_classes([AllowAny]) 
 def get_user_insights(request):
-    """
-    Get comprehensive insights across multiple cycles
-    """
 
-    # if not request.user.is_authenticated:
-    #     user = User.objects.get(id=1)  # Your superuser
-    # else:
-    #     user = request.user
     
     # Get last 3 cycles
     cycles = RunEntry.objects.filter(
@@ -780,24 +722,16 @@ class ActivePhaseView(APIView):
             'last_checked':             active_phase.last_checked.isoformat(),
         }, status=status.HTTP_200_OK)
  
- 
-# =============================================================
-#  2. PrescribedSessionListView
-#  GET /api/prescribed-sessions/
-#  GET /api/prescribed-sessions/?status=pending
-#  Returns prescribed sessions for the authenticated user.
-#  Automatically marks expired pending sessions as skipped
-#  before returning results.
-# =============================================================
+
  
 class PrescribedSessionListView(APIView):
     permission_classes = [IsAuthenticated]
  
     def get(self, request):
+        mark_expired_sessions(request.user)
         user = request.user
         status_filter = request.query_params.get('status', None)
  
-        # Auto-expire any pending sessions past their 3-day grace window
         pending_sessions = PrescribedSession.objects.filter(
             user=user,
             status='pending'
@@ -837,39 +771,23 @@ class PrescribedSessionListView(APIView):
             'count':    len(sessions),
             'sessions': sessions,
         }, status=status.HTTP_200_OK)
- 
- 
-# =============================================================
-#  3. CompleteBaselineRunView
-#  POST /api/prescribed-sessions/complete/
-#  Marks a prescribed session as completed, creates a RunEntry
-#  with is_baseline=True, and links them together.
-#
-#  Request body:
-#  {
-#    "prescribed_session_id": "uuid",
-#    "pace": 5.45,
-#    "distance": 5.0,
-#    "motivation_level": 7,
-#    "date": "2025-03-16T08:00:00Z"
-#  }
-# =============================================================
- 
-class CompleteBaselineRunView(APIView):
+
+
+class CompletePrescribedRunView(APIView):
     permission_classes = [IsAuthenticated]
- 
+
     def post(self, request):
         user = request.user
- 
+
         # ── Validate required fields ──────────────────────────
-        required = ['prescribed_session_id', 'pace', 'distance', 'motivation_level', 'date']
+        required = ['prescribed_session_id', 'pace', 'distance', 'motivation_level', 'exertion_level','date']
         missing  = [f for f in required if f not in request.data]
         if missing:
             return Response({
                 'error':          'Missing required fields',
                 'missing_fields': missing,
             }, status=status.HTTP_400_BAD_REQUEST)
- 
+
         # ── Fetch the prescribed session ──────────────────────
         try:
             session = PrescribedSession.objects.get(
@@ -880,31 +798,41 @@ class CompleteBaselineRunView(APIView):
             return Response({
                 'error': 'Prescribed session not found',
             }, status=status.HTTP_404_NOT_FOUND)
- 
+
+        # ── Prevent duplicate completion ──────────────────────
         if session.status == 'completed':
             return Response({
                 'error': 'This session has already been completed',
             }, status=status.HTTP_400_BAD_REQUEST)
- 
+
+        # ── Prevent completing rest sessions ──────────────────
+        if session.session_type == 'rest':
+            return Response({
+                'error': 'Rest sessions cannot be completed as runs'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         # ── Validate numeric fields ───────────────────────────
         try:
             pace             = float(request.data['pace'])
             distance         = float(request.data['distance'])
             motivation_level = int(request.data['motivation_level'])
- 
+            exertion_level = int(request.data['exertion_level'])
+
             if pace <= 0:
                 raise ValueError('Pace must be greater than 0')
             if distance <= 0:
                 raise ValueError('Distance must be greater than 0')
             if not (1 <= motivation_level <= 10):
                 raise ValueError('Motivation level must be between 1 and 10')
- 
+            if not (1 <= exertion_level <= 10):
+                raise ValueError('Exertion level must be between 1 and 10')
+
         except (ValueError, TypeError) as e:
             return Response({
                 'error':  'Invalid numeric values',
                 'detail': str(e),
             }, status=status.HTTP_400_BAD_REQUEST)
- 
+
         # ── Validate and parse date ───────────────────────────
         try:
             run_date = datetime.fromisoformat(
@@ -915,11 +843,14 @@ class CompleteBaselineRunView(APIView):
                 'error':  'Invalid date format',
                 'detail': 'Expected ISO8601 format (e.g. 2025-03-16T08:00:00Z)',
             }, status=status.HTTP_400_BAD_REQUEST)
- 
+
+        # ── Determine if baseline ─────────────────────────────
+        is_baseline = session.session_type == 'baseline_5k'
+
         # ── Get current phase for the run entry ───────────────
         active = get_active_phase(user)
         cycle_phase = active.phase if active else session.cycle_phase
- 
+
         # ── Calculate cycle_id ────────────────────────────────
         first_entry = RunEntry.objects.filter(user=user).order_by('date').first()
         if first_entry:
@@ -927,7 +858,7 @@ class CompleteBaselineRunView(APIView):
             cycle_id = (days_since_first // 28) + 1
         else:
             cycle_id = 1
- 
+
         # ── Create the RunEntry ───────────────────────────────
         run_entry = RunEntry.objects.create(
             user=user,
@@ -935,39 +866,29 @@ class CompleteBaselineRunView(APIView):
             pace=pace,
             distance=distance,
             motivation_level=motivation_level,
+            exertion_level = exertion_level,
             cycle_phase=cycle_phase,
             cycle_id=cycle_id,
-            is_baseline=True,
-            baseline_phase=session.cycle_phase,
+            is_baseline=is_baseline,
+            is_prescribed=session is not None,
+            baseline_phase=session.cycle_phase if is_baseline else None,
         )
- 
+
         # ── Mark session as completed and link the run ────────
-        session.status        = 'completed'
+        session.status = 'completed'
         session.completed_run = run_entry
         session.save(update_fields=['status', 'completed_run', 'updated_at'])
- 
+
         return Response({
-            'success':              True,
-            'run_entry_id':         run_entry.id,
+            'success':               True,
+            'run_entry_id':          run_entry.id,
             'prescribed_session_id': str(session.id),
-            'cycle_phase':          cycle_phase,
-            'is_baseline':          True,
-            'baseline_phase':       session.cycle_phase,
+            'cycle_phase':           cycle_phase,
+            'is_baseline':           is_baseline,
+            'baseline_phase':        session.cycle_phase if is_baseline else None,
         }, status=status.HTTP_201_CREATED)
- 
- 
-# =============================================================
-#  4. RaceGoalView
-#  GET  /api/race-goal/  — returns the user's active race goal
-#  POST /api/race-goal/  — creates a new race goal
-#
-#  POST request body:
-#  {
-#    "race_type": "10k",
-#    "race_date": "2025-06-01",   (omit or null for fun mode)
-#    "goal_time": "00:55:00"      (optional HH:MM:SS)
-#  }
-# =============================================================
+
+
  
 class RaceGoalView(APIView):
     permission_classes = [IsAuthenticated]
@@ -979,12 +900,13 @@ class RaceGoalView(APIView):
  
         if not goal:
             return Response({
-                'race_goal': None,
-                'message':   'No active race goal. Set one to build a training plan.',
+                'has_race_goal': False,
             }, status=status.HTTP_200_OK)
  
         return Response({
+            'has_race_goal': True,
             'id':         str(goal.id),
+            'race_name':  str(goal.race_name) if goal.race_name else None,
             'race_type':  goal.race_type,
             'race_date':  str(goal.race_date) if goal.race_date else None,
             'goal_time':  str(goal.goal_time) if goal.goal_time else None,
@@ -994,6 +916,9 @@ class RaceGoalView(APIView):
  
     def post(self, request):
         user = request.user
+
+        race_name = None
+        race_name = request.data.get('race_name')
  
         # ── Validate race_type ────────────────────────────────
         race_type = request.data.get('race_type')
@@ -1031,7 +956,6 @@ class RaceGoalView(APIView):
         raw_time  = request.data.get('goal_time')
         if raw_time:
             try:
-                from datetime import timedelta
                 parts     = raw_time.split(':')
                 goal_time = timedelta(
                     hours=int(parts[0]),
@@ -1043,6 +967,8 @@ class RaceGoalView(APIView):
                     'error':  'Invalid goal_time format',
                     'detail': 'Expected HH:MM:SS (e.g. 00:55:00)',
                 }, status=status.HTTP_400_BAD_REQUEST)
+            
+
  
         # ── Deactivate existing goals then create new one ──────
         RaceGoal.objects.filter(user=user, is_active=True).update(is_active=False)
@@ -1051,15 +977,41 @@ class RaceGoalView(APIView):
             user=user,
             race_type=race_type,
             race_date=race_date,
+            race_name=race_name,
             goal_time=goal_time,
             is_active=True,
         )
  
+        # ── Generate training schedule ────────────────────────
+        # generate_training_schedule returns (sessions, warnings)
+        # warnings are phase-level alerts based on historical symptom burden
+        try:
+            sessions, warnings = generate_training_schedule(user, goal)
+            summary = get_schedule_summary(user, goal, warnings)
+        except Exception as e:
+            # Goal was created successfully — don't roll it back.
+            # Return the goal with a warning that schedule generation failed.
+            return Response({
+                'success':   True,
+                'id':        str(goal.id),
+                'race_name': goal.race_name,
+                'race_type': goal.race_type,
+                'race_date': str(goal.race_date) if goal.race_date else None,
+                'goal_time': str(goal.goal_time) if goal.goal_time else None,
+                'is_active': goal.is_active,
+                'schedule':  None,
+                'warning':   f'Race goal created but schedule generation failed: {str(e)}',
+            }, status=status.HTTP_201_CREATED)
+ 
         return Response({
             'success':   True,
             'id':        str(goal.id),
+            'race_name': goal.race_name,
             'race_type': goal.race_type,
             'race_date': str(goal.race_date) if goal.race_date else None,
             'goal_time': str(goal.goal_time) if goal.goal_time else None,
             'is_active': goal.is_active,
+            'schedule':  summary,
         }, status=status.HTTP_201_CREATED)
+ 
+

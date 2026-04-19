@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest api/tests/test_fuzz.py -q --tb=short)",
+      "Bash(kill %%)",
+      "Bash(python -m pytest api/tests/test_fuzz.py::FuzzRaceGoal -q --tb=short)"
+    ]
+  }
+}
